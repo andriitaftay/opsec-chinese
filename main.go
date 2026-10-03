@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	_ "embed"
+	"flag"
 	"fmt"
 	"math/rand"
 	"os"
@@ -22,11 +23,13 @@ var embeddedImageData []byte
 const (
 	brightGreen = "\033[1;32m"
 	dimGreen    = "\033[2;32m"
-	brightWhite = "\033[1;97m"
+	brightColor = "\033[1;97m"
 	jwmWhite    = "\033[1;97m"
 )
 
-var matrixChars = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*()*&^%~`|/\\{}[]")
+var matrixCharsEn = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*()*&^%~`|/\\{}[]")
+var matrixCharsCh = []rune("的一是不了在人有我他这中大来上国个到说们为子和你地出也时年得就那要下以生会自着去之过家学对可她里后小么心多天而能好")
+var matrixChars = &matrixCharsEn
 
 type Drop struct {
 	y      float64
@@ -34,7 +37,37 @@ type Drop struct {
 	length int
 }
 
+type Language string
+
+const (
+	English Language = "en"
+	Chinese Language = "ch"
+)
+
 func main() {
+	lang := flag.String("lang", "en", "language: en, ch")
+	// static := flag.Bool("static", false, "change characters between frames")
+	speed := flag.Int("speed", 1, "")
+	jwmEnabled := flag.Bool("jwm", false, "idk what this is")
+	flag.Parse()
+
+	var charsize = 1
+	switch *lang {
+	case "en":
+		matrixChars = &matrixCharsEn
+		charsize = 1
+	case "ch":
+		matrixChars = &matrixCharsCh
+		charsize = 2
+	default:
+		fmt.Fprintf(
+			os.Stderr,
+			"invalid language %q: must be one of en, ch, etc\n",
+			*lang,
+		)
+		os.Exit(1)
+	}
+
 	_ = extractAndSetWallpaper()
 
 	oldState, _ := term.MakeRaw(int(os.Stdin.Fd()))
@@ -61,7 +94,7 @@ func main() {
 		}
 	}()
 
-	runMatrixRain()
+	runMatrixRain(int16(*speed), charsize, *jwmEnabled)
 }
 
 func cleanExit(oldState *term.State) {
@@ -112,7 +145,7 @@ func setWallpaper(imagePath string) error {
 	}
 }
 
-func runMatrixRain() {
+func runMatrixRain(speed int16, charsize int, jwmEnabled bool) {
 	rand.Seed(time.Now().UnixNano())
 	writer := bufio.NewWriter(os.Stdout)
 
@@ -127,10 +160,10 @@ func runMatrixRain() {
 		drops[i].y = float64(rand.Intn(height))
 	}
 
-	ticker := time.NewTicker(45 * time.Millisecond)
+	ticker := time.NewTicker(time.Duration(45 / float64(speed) * float64(time.Millisecond)))
 	defer ticker.Stop()
 
-	jwmText := []rune("JWM")
+	jwmText := []rune("防火长城")
 	jwmX := -1
 	jwmY := -1
 
@@ -141,7 +174,9 @@ func runMatrixRain() {
 		}
 	}
 
-	spawnJWM(width, height)
+	if jwmEnabled {
+		spawnJWM(width, height)
+	}
 
 	for range ticker.C {
 		if newW, newH, err := term.GetSize(int(os.Stdout.Fd())); err == nil && newW > 0 && newH > 0 {
@@ -158,19 +193,19 @@ func runMatrixRain() {
 
 		jwmHit := false
 
-		for x := 0; x < width; x++ {
+		for x := 0; x < width; x += charsize {
 			d := &drops[x]
 			headY := int(d.y)
 
 			if headY > 0 && headY <= height {
-				char := matrixChars[rand.Intn(len(matrixChars))]
-				writer.WriteString(fmt.Sprintf("\033[%d;%dH%s%c", headY, x+1, brightWhite, char))
+				char := (*matrixChars)[rand.Intn(len(*matrixChars))]
+				writer.WriteString(fmt.Sprintf("\033[%d;%dH%s%c", headY, x+1, brightColor, char))
 			}
 
 			for i := 1; i <= d.length; i++ {
 				trailY := headY - i
 				if trailY > 0 && trailY <= height {
-					char := matrixChars[rand.Intn(len(matrixChars))]
+					char := (*matrixChars)[rand.Intn(len(*matrixChars))]
 					var color string
 					if i < d.length/3 {
 						color = brightGreen
@@ -181,13 +216,13 @@ func runMatrixRain() {
 				}
 			}
 
-			clearY := headY - d.length - 1
+			clearY := headY - d.length - charsize
 			if clearY > 0 && clearY <= height {
 				writer.WriteString(fmt.Sprintf("\033[%d;%dH ", clearY, x+1))
 			}
 
 			if jwmX > 0 && jwmY > 0 {
-				for i := 0; i < len(jwmText); i++ {
+				for i := 0; i < len(jwmText); i += charsize {
 					targetX := jwmX + i
 					if x+1 == targetX {
 						if headY >= jwmY && headY-d.length <= jwmY {
